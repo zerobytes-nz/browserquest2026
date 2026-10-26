@@ -39,6 +39,7 @@ define(['jquery', 'storage'], function($, Storage) {
             this.$loginnameinput = $('#loginnameinput');
             this.$loginpwinput = $('#loginpwinput');
             this.$theoswapcode = $('#logintheocode');
+            this.$createtheoswapcode = $('#createtheocode');
             this.loginFormFields = [this.$loginnameinput, this.$loginpwinput, this.$theoswapcode];
 
             // TheoSwap user code: from the game link on TheoSwap (?userCode=...), or the one used last time.
@@ -47,13 +48,14 @@ define(['jquery', 'storage'], function($, Storage) {
                 savedCode = localStorage.getItem('theoswapCode');
             } catch(e) {}
             this.$theoswapcode.attr('value', this.getUrlTheoSwapCode() || savedCode || '');
+            this.$createtheoswapcode.attr('value', this.getUrlTheoSwapCode() || savedCode || '');
 
             // Create new character form fields
             this.$nameinput = $('#nameinput');
             this.$pwinput = $('#pwinput');
             this.$pwinput2 = $('#pwinput2');
             this.$email = $('#emailinput');
-            this.createNewCharacterFormFields = [this.$nameinput, this.$pwinput, this.$pwinput2, this.$email];
+            this.createNewCharacterFormFields = [this.$nameinput, this.$pwinput, this.$pwinput2, this.$email, this.$createtheoswapcode];
 
             // Functions to return the proper username / password fields to use, depending on which form
             // (login or create new character) is currently active.
@@ -94,10 +96,11 @@ define(['jquery', 'storage'], function($, Storage) {
 
             if(!this.validateFormFields(username, userpw, userpw2, email)) return;
 
-            // New characters only get a TheoSwap code from the game link; the login form has a box for it.
-            var theoswapCode = action === 'create' ? this.getUrlTheoSwapCode() : $.trim(this.$theoswapcode.attr('value') || '');
+            // Both forms have a TheoSwap code box.
+            var $codeField = action === 'create' ? this.$createtheoswapcode : this.$theoswapcode,
+                theoswapCode = $.trim($codeField.attr('value') || '');
             if(theoswapCode && !/^[A-Za-z0-9_-]{4,64}$/.test(theoswapCode)) {
-                this.addValidationError(this.$theoswapcode, 'That TheoSwap code is not valid. Copy it from your TheoSwap profile, or leave it blank.');
+                this.addValidationError($codeField, 'That TheoSwap code is not valid. Copy it from your TheoSwap profile, or leave it blank.');
                 return;
             }
             this.game.theoswapCode = theoswapCode;
