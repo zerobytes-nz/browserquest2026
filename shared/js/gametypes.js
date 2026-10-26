@@ -32,6 +32,8 @@ Types = {
         PVP: 28,
         GUILD: 29,
         GUILDERROR: 30,
+        INVENTORY: 31,
+        THEOSWAP: 32,
         GUILDERRORTYPE: {
         	DOESNOTEXIST: 1,
         	BADNAME: 2,
@@ -113,7 +115,36 @@ Types = {
         GOLDENSWORD: 63,
         MORNINGSTAR: 64,
         AXE: 65,
-        BLUESWORD: 66
+        BLUESWORD: 66,
+
+        // TheoSwap NFT gear
+        SWIFTBOOTS: 70,
+        POWERRING: 71,
+        LIFEAMULET: 72,
+        THEOSWORD2: 73,
+        THEOAXE: 74,
+        THEOMAILARMOR: 75
+    },
+
+    Inventory: {
+        SIZE: 16,
+        MAX_STACK: 99,
+        QUICK_SIZE: 4,
+
+        // Character slots, in the order they are sent to the client. Only weapon and
+        // armor change the character's sprite; the others only add stats.
+        // offhand is reserved for shields, spellbooks and orbs.
+        EQUIP_SLOTS: ["weapon", "armor", "helmet", "boots", "ring", "amulet", "offhand"],
+
+        // What a quick bar slot points at. Spells will get their own type.
+        QUICK_ITEM: 1,
+
+        // Actions a client can request: [INVENTORY, action, a, b]
+        USE: 1,         // a = bag slot
+        DROP: 2,        // a = bag slot
+        UNEQUIP: 3,     // a = index in EQUIP_SLOTS
+        SET_QUICK: 4,   // a = quick bar slot, b = item kind (0 clears it)
+        USE_QUICK: 5    // a = quick bar slot
     },
 
     Orientations: {
@@ -135,6 +166,11 @@ Types = {
         D: 68,
         SPACE: 32,
         I: 73,
+        B: 66,
+        ONE: 49,
+        TWO: 50,
+        THREE: 51,
+        FOUR: 52,
         H: 72,
         M: 77,
         P: 80,
@@ -169,6 +205,13 @@ var kinds = {
     bluesword: [Types.Entities.BLUESWORD, "weapon"],
     goldensword: [Types.Entities.GOLDENSWORD, "weapon"],
     morningstar: [Types.Entities.MORNINGSTAR, "weapon"],
+
+    swiftboots: [Types.Entities.SWIFTBOOTS, "boots"],
+    powerring: [Types.Entities.POWERRING, "ring"],
+    lifeamulet: [Types.Entities.LIFEAMULET, "amulet"],
+    theosword2: [Types.Entities.THEOSWORD2, "weapon"],
+    theoaxe: [Types.Entities.THEOAXE, "weapon"],
+    theomailarmor: [Types.Entities.THEOMAILARMOR, "armor"],
 
     firefox: [Types.Entities.FIREFOX, "armor"],
     clotharmor: [Types.Entities.CLOTHARMOR, "armor"],
@@ -291,11 +334,11 @@ Types.getLevel = function(exp){
     return 135;
 };
 Types.getWeaponRank = function(weaponKind) {
-    return _.indexOf(Types.rankedWeapons, weaponKind);
+    return _.indexOf(Types.rankedWeapons, Types.getBaseKind(weaponKind));
 };
 
 Types.getArmorRank = function(armorKind) {
-    return _.indexOf(Types.rankedArmors, armorKind);
+    return _.indexOf(Types.rankedArmors, Types.getBaseKind(armorKind));
 };
 Types.getMobExp = function(mobKind){
     return kinds.getMobExp(mobKind);
@@ -351,6 +394,73 @@ Types.isExpendableItem = function(kind) {
     return Types.isHealingItem(kind)
         || kind === Types.Entities.FIREPOTION
         || kind === Types.Entities.CAKE;
+};
+
+// Name of the character slot an item is worn in, or null.
+// New gear only needs a kinds entry whose type is one of EQUIP_SLOTS, e.g. "helmet".
+Types.getEquipSlot = function(kind) {
+    if(!Types.getKindAsString(kind)) {
+        return null; // Unknown kind, e.g. from a tampered client message
+    }
+    var type = kinds.getType(kind);
+    return Types.Inventory.EQUIP_SLOTS.indexOf(type) >= 0 ? type : null;
+};
+
+// True when picking up this gear should equip it straight away instead of bagging it:
+// a higher-ranked weapon or armour, or anything for an empty slot.
+Types.isUpgrade = function(kind, equippedKind) {
+    var slot = Types.getEquipSlot(kind);
+
+    if(!slot) {
+        return false;
+    }
+    if(!equippedKind) {
+        return true;
+    }
+    if(slot === "weapon") {
+        return Types.getWeaponRank(kind) > Types.getWeaponRank(equippedKind);
+    }
+    if(slot === "armor") {
+        return Types.getArmorRank(kind) > Types.getArmorRank(equippedKind);
+    }
+    return false; // Other slots have no ranking yet
+};
+
+// TheoSwap item ids (from the game's config on theoswap.io) and the gear they become.
+// This gear is bound to the player's NFTs: it can't be dropped, and goes away if the NFT does.
+Types.TheoSwap = {
+    GEAR: {
+        boots_swift: Types.Entities.SWIFTBOOTS,
+        ring_power: Types.Entities.POWERRING,
+        amulet_life: Types.Entities.LIFEAMULET,
+        steel_sword: Types.Entities.THEOSWORD2,
+        battle_axe: Types.Entities.THEOAXE,
+        mail_armour: Types.Entities.THEOMAILARMOR
+    },
+    // NFT copies of the game's own gear: same look and rank as these, plus the NFT's bonus.
+    BASE_KIND: {},
+    POTION_PACK: "potion_pack"
+};
+Types.TheoSwap.BASE_KIND[Types.Entities.THEOSWORD2] = Types.Entities.SWORD2;
+Types.TheoSwap.BASE_KIND[Types.Entities.THEOAXE] = Types.Entities.AXE;
+Types.TheoSwap.BASE_KIND[Types.Entities.THEOMAILARMOR] = Types.Entities.MAILARMOR;
+
+Types.getBaseKind = function(kind) {
+    return Types.TheoSwap.BASE_KIND[kind] || kind;
+};
+
+Types.isBoundItem = function(kind) {
+    for(var id in Types.TheoSwap.GEAR) {
+        if(Types.TheoSwap.GEAR[id] === kind) {
+            return true;
+        }
+    }
+    return false;
+};
+
+Types.isBaggable = function(kind) {
+    return Types.getEquipSlot(kind) !== null
+        || Types.isHealingItem(kind);
 };
 
 Types.getKindFromString = function(kind) {

@@ -1,0 +1,149 @@
+/* Character and bag window, and the quick bar.
+   Sizes are multiples of --u, the game's pixel scale at each breakpoint in main.css. */
+
+#inventory, #quickbar {--u:2px;}
+@media screen and (min-width: 1501px) {
+    #inventory, #quickbar {--u:3px;}
+}
+@media screen and (max-width: 1500px), screen and (max-height: 870px) {
+    #inventory, #quickbar {--u:2px;}
+}
+@media screen and (max-width: 1000px) {
+    #inventory, #quickbar {--u:1px;}
+}
+@media screen and (max-width: 800px) {
+    #inventory, #quickbar {--u:1px;}
+}
+
+/* Shared slot look */
+.inventory-slot {
+    position:relative;
+    width:calc(var(--u) * 20);height:calc(var(--u) * 20);
+    box-sizing:border-box;
+    background:#2b2016;
+    border:var(--u) solid #5a4630;
+    font-family:'GraphicPixel', sans-serif;
+}
+.inventory-slot.filled {cursor:pointer;}
+.inventory-slot.filled:hover {border-color:#fce045;}
+.inventory-slot.drop-target {border-color:#7fd1ff;}
+.inventory-slot .icon {
+    position:absolute;
+    top:var(--u);left:var(--u);
+    width:calc(var(--u) * 16);height:calc(var(--u) * 16);
+    background-size:600% 100%;
+    background-position:0 0;
+    image-rendering:pixelated;
+    image-rendering:-moz-crisp-edges;
+}
+.inventory-slot .count {
+    position:absolute;right:var(--u);bottom:0;
+    font-size:calc(var(--u) * 7);
+    color:#fff;
+    text-shadow:var(--u) var(--u) 0 #000;
+}
+
+/* Window */
+#inventory {
+    position:absolute;top:50%;left:50%;z-index:1000;
+    transform:translate(-50%, -50%);
+    padding:calc(var(--u) * 6);
+    background:rgba(28, 20, 14, 0.94);
+    border:calc(var(--u) * 2) solid #8b6b3d;
+    box-shadow:0 0 0 var(--u) #2b1d10;
+    font-family:'GraphicPixel', sans-serif;
+    font-size:calc(var(--u) * 7);
+    color:#e3e3e3;
+    opacity:0;pointer-events:none;
+    transition:0.2s opacity linear;
+}
+#inventory.active {opacity:1;pointer-events:auto;}
+
+#inventory header, #inventory-body {
+    display:grid;
+    grid-template-columns:calc(var(--u) * 86) calc(var(--u) * 64);
+    column-gap:calc(var(--u) * 8);
+}
+#inventory header {position:relative;margin-bottom:calc(var(--u) * 4);}
+#inventory h2, #inventory p {font-family:inherit;}
+#inventory h2 {margin:0;font-size:calc(var(--u) * 9);font-weight:normal;color:#fce045;}
+#inventory-close {
+    position:absolute;right:0;top:calc(var(--u) * -2);
+    cursor:pointer;font-size:calc(var(--u) * 12);line-height:1;
+}
+#inventory-close:hover {color:#fce045;}
+
+/* Character panel: helmet on top, weapon / body / off-hand, then ring / boots / amulet */
+#inventory-equipment {
+    display:grid;
+    grid-template-columns:repeat(3, calc(var(--u) * 20));
+    grid-template-areas:". helmet ." "weapon armor offhand" "ring boots amulet";
+    gap:calc(var(--u) * 2);
+}
+#inventory-equipment [data-equip="helmet"] {grid-area:helmet;}
+#inventory-equipment [data-equip="weapon"] {grid-area:weapon;}
+#inventory-equipment [data-equip="armor"] {grid-area:armor;}
+#inventory-equipment [data-equip="offhand"] {grid-area:offhand;}
+#inventory-equipment [data-equip="ring"] {grid-area:ring;}
+#inventory-equipment [data-equip="boots"] {grid-area:boots;}
+#inventory-equipment [data-equip="amulet"] {grid-area:amulet;}
+.inventory-slot.equip {background:#3a2b1b;border-color:#b08a4a;}
+.inventory-slot.equip:not(.filled)::after {
+    content:attr(data-label);
+    position:absolute;inset:0;
+    display:flex;align-items:center;justify-content:center;
+    font-size:calc(var(--u) * 5);
+    color:#7d6a4c;
+}
+.inventory-slot.equip.reserved {opacity:0.4;}
+
+#inventory-body {align-items:start;}
+
+/* Stats under the character panel */
+#inventory-stats {
+    display:grid;
+    grid-template-columns:auto auto;
+    justify-content:space-between;
+    row-gap:var(--u);
+    margin:calc(var(--u) * 4) 0 0;
+    padding-top:calc(var(--u) * 3);
+    border-top:var(--u) solid #5a4630;
+    font-size:calc(var(--u) * 6);
+}
+#inventory-stats dt {color:#bfae90;}
+#inventory-stats dd {margin:0;text-align:right;color:#fff;}
+#inventory-stats .reserved {opacity:0.4;}
+#inventory-info {margin:calc(var(--u) * 5) 0 0;line-height:1.3;color:#bfae90;font-size:calc(var(--u) * 6);}
+
+#inventory-slots {
+    display:grid;
+    grid-template-columns:repeat(4, calc(var(--u) * 20));
+    align-content:start;
+    gap:calc(var(--u) * 2);
+}
+
+/* Quick bar, just above the bottom bar (the canvas is 224 game pixels tall).
+   It sits on the left while playing and moves to the centre while the bag is open,
+   under the chat box (z 5), achievement pop-ups (z 8) and speech bubbles. */
+#bubbles {z-index:2;}
+#quickbar {
+    position:absolute;z-index:1;
+    left:calc(var(--u) * 3);transform:translateX(0);
+    top:calc(var(--u) * 200);
+    transition:left 0.2s ease, transform 0.2s ease;
+    display:none;
+    gap:var(--u);
+    padding:var(--u);
+    background:rgba(28, 20, 14, 0.75);
+    border:var(--u) solid #5a4630;
+}
+.game #quickbar {display:flex;}
+#inventory.active ~ #quickbar {left:50%;transform:translateX(-50%);}
+.inventory-slot.quick::before {
+    content:attr(data-key);
+    position:absolute;left:var(--u);top:0;z-index:1;
+    font-size:calc(var(--u) * 6);
+    color:#bfae90;
+    text-shadow:var(--u) var(--u) 0 #000;
+}
+.inventory-slot.quick.empty-stack .icon {opacity:0.35;}

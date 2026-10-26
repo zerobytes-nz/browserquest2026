@@ -22,6 +22,14 @@ define(['character', 'exceptions'], function(Character, Exceptions) {
             this.armorName = "clotharmor";
             this.weaponName = "sword1";
 
+            // Bag slots as sent by the server: null or {kind, count}
+            this.bag = [];
+            this.quick = [];
+
+            // Bonuses from TheoSwap NFT gear being worn, as sent by the server
+            this.nftBonus = {speed: 0, attack: 0, defence: 0, health: 0};
+            this.baseMoveSpeed = this.moveSpeed;
+
             // modes
             this.isLootMoving = false;
             this.isSwitchingWeapon = true;
@@ -75,38 +83,35 @@ define(['character', 'exceptions'], function(Character, Exceptions) {
 
         loot: function(item) {
             if(item) {
-                var rank, currentRank, msg, currentArmorName;
-
-                if(this.currentArmorSprite) {
-                    currentArmorName = this.currentArmorSprite.name;
-                } else {
-                    currentArmorName = this.spriteName;
-                }
-
-                if(item.type === "armor") {
-                    rank = Types.getArmorRank(item.kind);
-                    currentRank = Types.getArmorRank(Types.getKindFromString(currentArmorName));
-                    msg = "You are wearing a better armor";
-                } else if(item.type === "weapon") {
-                    rank = Types.getWeaponRank(item.kind);
-                    currentRank = Types.getWeaponRank(Types.getKindFromString(this.weaponName));
-                    msg = "You are wielding a better weapon";
-                }
-
-                if(rank && currentRank) {
-                    if(rank === currentRank) {
-                        throw new Exceptions.LootException("You already have this "+item.type);
-                    } else if(rank <= currentRank) {
-                        throw new Exceptions.LootException(msg);
-                    }
+                if(Types.isBaggable(item.kind) && !this.isUpgrade(item.kind) && !this.hasRoomFor(item.kind)) {
+                    throw new Exceptions.LootException("Your bag is full");
                 }
 
                 log.info('Player '+this.id+' has looted '+item.id);
-                if(Types.isArmor(item.kind) && this.invincible) {
-                    this.stopInvincibility();
+                if(!Types.isBaggable(item.kind)) {
+                    item.onLoot(this);
                 }
-                item.onLoot(this);
             }
+        },
+
+        // Mirrors Player.isUpgrade on the server: better gear is equipped on pickup.
+        isUpgrade: function(kind) {
+            var slot = Types.getEquipSlot(kind);
+            return !!slot && !!this.equipped && Types.isUpgrade(kind, this.equipped[slot]);
+        },
+
+        countItem: function(kind) {
+            return _.reduce(this.bag, function(total, slot) {
+                return total + (slot && slot.kind === kind ? slot.count : 0);
+            }, 0);
+        },
+
+        // Mirrors Bag.findSlotFor on the server.
+        hasRoomFor: function(kind) {
+            return _.any(this.bag, function(slot) {
+                return slot === null
+                    || (Types.isHealingItem(kind) && slot.kind === kind && slot.count < Types.Inventory.MAX_STACK);
+            });
         },
 
         /**
@@ -150,25 +155,6 @@ define(['character', 'exceptions'], function(Character, Exceptions) {
 
         hasWeapon: function() {
             return this.weaponName !== null;
-        },
-        equipFromInventory: function(type, inventoryNumber, sprites){
-            var itemString = Types.getKindAsString(this.inventory[inventoryNumber]);
-
-            if(itemString){
-                var itemSprite = sprites[itemString];
-                if(itemSprite){
-                    if(type === "armor"){
-                        this.inventory[inventoryNumber] = Types.getKindFromString(this.getArmorName());
-                        this.setSpriteName(itemString);
-                        this.setSprite(itemSprite);
-                        this.setArmorName(itemString);
-                    } else if(type === "avatar"){
-                        this.inventory[inventoryNumber] = null;
-                        this.setSpriteName(itemString);
-                        this.setSprite(itemSprite);
-                    }
-                }
-            }
         },
         switchArmor: function(armorName, sprite){
             this.setSpriteName(armorName);

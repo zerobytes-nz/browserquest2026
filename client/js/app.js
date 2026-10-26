@@ -349,12 +349,16 @@ define(['jquery', 'storage'], function($, Storage) {
         },
 
         initHealthBar: function() {
-            var scale = this.game.renderer.getScaleFactor(),
+            var self = this,
+                scale = this.game.renderer.getScaleFactor(),
                 healthMaxWidth = $("#healthbar").width() - (12 * scale);
 
             this.game.onPlayerHealthChange(function(hp, maxHp) {
                 var barWidth = Math.round((healthMaxWidth / maxHp) * (hp > 0 ? hp : 0));
                 $("#hitpoints").css('width', barWidth + "px");
+                if($('#inventory').hasClass('active') && self.game.player && self.game.player.equipped) {
+                    self.renderStats();
+                }
             });
 
             this.game.onPlayerHurt(this.blinkHealthBar.bind(this));
@@ -450,6 +454,112 @@ define(['jquery', 'storage'], function($, Storage) {
             if(armor !== 'firefox') {
                 $('#armor').css('background-image', 'url("' + armorPath + '")');
             }
+        },
+
+        itemNames: {
+            sword1: "Sword", sword2: "Steel sword", axe: "Axe", morningstar: "Morning star",
+            bluesword: "Magic sword", redsword: "Blazing sword", goldensword: "Ultimate sword",
+            clotharmor: "Cloth armour", leatherarmor: "Leather armour", mailarmor: "Mail armour",
+            platearmor: "Plate armour", redarmor: "Ruby armour", goldenarmor: "Golden armour",
+            flask: "Health potion", burger: "Rat burger",
+            swiftboots: "Boots of Swiftness (TheoSwap NFT)", powerring: "Ring of Power (TheoSwap NFT)",
+            lifeamulet: "Amulet of Life (TheoSwap NFT)", theosword2: "Steel sword (TheoSwap NFT)",
+            theoaxe: "Battle axe (TheoSwap NFT)", theomailarmor: "Mail armour (TheoSwap NFT)"
+        },
+
+        toggleInventory: function() {
+            $('#inventory').toggleClass('active');
+            this.renderInventory();
+        },
+
+        hideInventory: function() {
+            $('#inventory').removeClass('active');
+        },
+
+        // Fills a slot element with an item icon, or empties it.
+        fillSlot: function($slot, kind, count) {
+            var name = kind && Types.getKindAsString(kind),
+                scale = this.game.renderer.getScaleFactor();
+
+            $slot.empty().toggleClass('filled', !!name).removeAttr('title');
+            if(name) {
+                $('<div class="icon"></div>')
+                    .css('background-image', 'url("img/' + scale + '/item-' + name + '.png")')
+                    .appendTo($slot);
+                if(count > 1) {
+                    $('<span class="count"></span>').text(count).appendTo($slot);
+                }
+                $slot.attr('title', this.itemNames[name] || name);
+            }
+        },
+
+        renderInventory: function() {
+            var self = this,
+                player = this.game.player,
+                $slots = $('#inventory-slots');
+
+            this.renderQuickbar();
+            if(!player || !player.equipped || !$('#inventory').hasClass('active')) {
+                return;
+            }
+
+            $('#inventory-equipment .equip').each(function() {
+                var $slot = $(this);
+                self.fillSlot($slot, player.equipped[$slot.attr('data-equip')], 1);
+            });
+
+            this.renderStats();
+
+            $slots.empty();
+            for(var i = 0; i < Types.Inventory.SIZE; i++) {
+                var entry = player.bag[i],
+                    $slot = $('<div class="inventory-slot bag"></div>').attr('data-slot', i);
+
+                this.fillSlot($slot, entry && entry.kind, entry && entry.count);
+                if(entry) {
+                    $slot.attr('draggable', 'true');
+                }
+                $slots.append($slot);
+            }
+        },
+
+        // Same numbers the server uses in Formulas.dmg: weapon and armour levels are rank + 1.
+        renderStats: function() {
+            var player = this.game.player,
+                attack = Types.getWeaponRank(player.equipped.weapon) + 1,
+                defence = Types.getArmorRank(player.equipped.armor) + 1,
+                bonus = player.nftBonus,
+                $stats = $('#inventory-stats');
+
+            // NFT gear adds flat damage to every hit that lands
+            $stats.find('[data-stat="attack"]').text(attack + (bonus.attack ? ' +' + bonus.attack : ''))
+                .attr('title', 'Hits for ' + (attack * 5 + bonus.attack) + '-' + (attack * 10 + bonus.attack) + ' before armour');
+            $stats.find('[data-stat="speed"]').text(bonus.speed ? '+' + bonus.speed + '%' : '-');
+            $stats.find('[data-stat="defence"]').text(defence + (bonus.defence ? ' +' + bonus.defence : ''))
+                .attr('title', 'Blocks ' + (defence + bonus.defence) + '-' + (defence * 3 + bonus.defence) + ' damage per hit');
+            $stats.find('[data-stat="health"]').text(player.hitPoints + ' / ' + player.maxHitPoints);
+        },
+
+        // Quick bar slots show the total carried, greyed out when none are left.
+        renderQuickbar: function() {
+            var self = this,
+                player = this.game.player;
+
+            if(!player || !player.quick) {
+                return;
+            }
+            $('#quickbar .quick').each(function() {
+                var $slot = $(this),
+                    entry = player.quick[parseInt($slot.attr('data-quick'))],
+                    kind = entry && entry.type === Types.Inventory.QUICK_ITEM ? entry.id : null,
+                    count = kind ? player.countItem(kind) : 0;
+
+                self.fillSlot($slot, kind, count);
+                $slot.toggleClass('empty-stack', !!kind && count === 0);
+                if(kind) {
+                    $slot.attr('title', $slot.attr('title') + ' (' + $slot.attr('data-key') + ', right-click to clear)');
+                }
+            });
         },
 
         hideWindows: function() {

@@ -29,6 +29,7 @@ Mozilla presents an HTML5 mini-MMORPG by Little Workshop http://www.littleworksh
         <meta property="og:description" content="Play Mozilla's BrowserQuest, an HTML5 massively multiplayer game demo powered by WebSockets!">
         <link rel="stylesheet" href="css/main.css" type="text/css">
         <link rel="stylesheet" href="css/achievements.css" type="text/css">
+        <link rel="stylesheet" href="css/inventory.css" type="text/css">
 
         <link href="img/common/apple-touch-icon-57x57.png" rel="apple-touch-icon-precomposed" sizes="57x57">
         <link href="img/common/apple-touch-icon-72x72.png" rel="apple-touch-icon-precomposed" sizes="72x72">
@@ -264,6 +265,41 @@ Mozilla presents an HTML5 mini-MMORPG by Little Workshop http://www.littleworksh
 		                <div id="next"></div>
 		            </nav>
 		        </article>
+		        <article id="inventory" class="clickable">
+		            <header>
+		                <h2>Bag</h2>
+		                <h2>Character</h2>
+		                <span id="inventory-close" title="Close (B)">&times;</span>
+		            </header>
+		            <div id="inventory-body">
+		                <section id="inventory-slots"></section>
+		                <section id="inventory-character">
+		                    <div id="inventory-equipment">
+		                        <div class="inventory-slot equip" data-equip="helmet" data-label="Head"></div>
+		                        <div class="inventory-slot equip" data-equip="weapon" data-label="Weapon"></div>
+		                        <div class="inventory-slot equip" data-equip="armor" data-label="Body"></div>
+		                        <div class="inventory-slot equip reserved" data-equip="offhand" data-label="Off-hand" title="Off-hand (coming later)"></div>
+		                        <div class="inventory-slot equip" data-equip="ring" data-label="Ring"></div>
+		                        <div class="inventory-slot equip" data-equip="boots" data-label="Feet"></div>
+		                        <div class="inventory-slot equip" data-equip="amulet" data-label="Neck"></div>
+		                    </div>
+		                    <dl id="inventory-stats">
+		                        <dt>Attack</dt><dd data-stat="attack">-</dd>
+		                        <dt>Defence</dt><dd data-stat="defence">-</dd>
+		                        <dt>Health</dt><dd data-stat="health">-</dd>
+		                        <dt>Speed</dt><dd data-stat="speed" title="Faster walking from TheoSwap boots">-</dd>
+		                        <dt class="reserved">Magic</dt><dd class="reserved" title="Coming later">-</dd>
+		                    </dl>
+		                </section>
+		            </div>
+		            <p id="inventory-info">Click: use or equip &middot; Shift+click: drop one &middot; Drag to the quick bar (keys 1-4)</p>
+		        </article>
+		        <div id="quickbar" class="clickable">
+		            <div class="inventory-slot quick" data-quick="0" data-key="1"></div>
+		            <div class="inventory-slot quick" data-quick="1" data-key="2"></div>
+		            <div class="inventory-slot quick" data-quick="2" data-key="3"></div>
+		            <div class="inventory-slot quick" data-quick="3" data-key="4"></div>
+		        </div>
     			<div id="canvas">
     				<canvas id="background"></canvas>
     				<canvas id="entities"></canvas>
@@ -302,8 +338,8 @@ Mozilla presents an HTML5 mini-MMORPG by Little Workshop http://www.littleworksh
 					</div>
 					<div id="hitpoints">
 					</div>
-					<div id="weapon"></div>
-					<div id="armor"></div>
+					<div id="weapon" class="clickable" title="Bag (B)"></div>
+					<div id="armor" class="clickable" title="Bag (B)"></div>
 					<div id="notifications">
 					    <div>
 					       <span id="message1"></span>

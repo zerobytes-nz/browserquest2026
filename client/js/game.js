@@ -79,7 +79,8 @@ function(InfoManager, BubbleManager, Renderer, Map, Animation, Sprite, AnimatedT
                                 "sorcerer", "octocat", "beachnpc", "forestnpc", "desertnpc", "lavanpc", "clotharmor", "leatherarmor", "mailarmor",
                                 "platearmor", "redarmor", "goldenarmor", "firefox", "death", "sword1", "axe", "chest",
                                 "sword2", "redsword", "bluesword", "goldensword", "item-sword2", "item-axe", "item-redsword", "item-bluesword", "item-goldensword", "item-leatherarmor", "item-mailarmor",
-                                "item-platearmor", "item-redarmor", "item-goldenarmor", "item-flask", "item-cake", "item-burger", "morningstar", "item-morningstar", "item-firepotion"];
+                                "item-platearmor", "item-redarmor", "item-goldenarmor", "item-flask", "item-cake", "item-burger", "morningstar", "item-morningstar", "item-firepotion",
+                                "theosword2", "theoaxe", "theomailarmor"];
         },
 
         setup: function($bubbleContainer, canvas, background, foreground, input) {
@@ -1539,6 +1540,57 @@ function(InfoManager, BubbleManager, Renderer, Map, Animation, Sprite, AnimatedT
                     self.updateBars();
                 });
 
+                self.client.onInventory(function(equipped, quick, slots) {
+                    var weaponName = Types.getKindAsString(equipped.weapon),
+                        armorName = Types.getKindAsString(equipped.armor);
+
+                    self.player.bag = slots;
+                    self.player.quick = quick;
+                    self.player.equipped = equipped;
+                    self.bagActionPending = false;
+                    if(weaponName && weaponName !== self.player.getWeaponName()) {
+                        self.player.switchWeapon(weaponName);
+                    }
+                    if(armorName && armorName !== self.player.getArmorName()) {
+                        if(self.player.invincible) {
+                            // Shown once the Firefox potion wears off
+                            self.player.currentArmorSprite = self.sprites[armorName];
+                        } else {
+                            self.player.switchArmor(self.sprites[armorName]);
+                        }
+                    }
+                    if(self.inventory_callback) {
+                        self.inventory_callback();
+                    }
+                });
+
+                self.client.onTheoSwap(function(linked, bonus, potionsAdded, maxHp, hp) {
+                    var player = self.player;
+
+                    if(!linked) {
+                        self.showNotification("Could not load your TheoSwap items");
+                        return;
+                    }
+                    player.nftBonus = bonus;
+                    // Speed Bonus is a percentage: lower moveSpeed is faster
+                    player.moveSpeed = Math.round(player.baseMoveSpeed / (1 + bonus.speed / 100));
+                    player.maxHitPoints = maxHp;
+                    player.hitPoints = hp;
+                    self.updateBars();
+                    if(potionsAdded > 0) {
+                        self.showNotification("TheoSwap: " + potionsAdded + " health potions added to your bag");
+                    }
+                    if(self.inventory_callback) {
+                        self.inventory_callback();
+                    }
+                });
+
+                // Playing from TheoSwap: the game link carries the player's user code.
+                var userCode = new URLSearchParams(window.location.search).get("userCode");
+                if(userCode) {
+                    self.client.sendTheoSwapLink(userCode);
+                }
+
                 self.client.onPlayerEquipItem(function(playerId, itemKind) {
                     var player = self.getEntityById(playerId),
                         itemName = Types.getKindAsString(itemKind);
@@ -2567,6 +2619,96 @@ function(InfoManager, BubbleManager, Renderer, Map, Animation, Sprite, AnimatedT
             this.playerhurt_callback = callback;
         },
 
+        onPlayerInventoryChange: function(callback) {
+            this.inventory_callback = callback;
+        },
+
+        // Sends one bag action at a time, until the server's reply or a second has passed.
+        sendBagAction: function(action, a, b) {
+            var self = this;
+
+            if(this.bagActionPending) {
+                return;
+            }
+            this.bagActionPending = true;
+            clearTimeout(this.bagActionTimeout);
+            this.bagActionTimeout = setTimeout(function() {
+                self.bagActionPending = false;
+            }, 1000);
+            this.client.sendInventoryAction(action, a, b);
+        },
+
+        // Healing at full health is refused by the server too; this just explains why.
+        canUseItem: function(kind) {
+            if(Types.isHealingItem(kind) && this.player.hitPoints >= this.player.maxHitPoints) {
+                this.showNotification("You are already at full health");
+                return false;
+            }
+            return true;
+        },
+
+        useItemSound: function(kind) {
+            this.audioManager.playSound(Types.isHealingItem(kind) ? "heal" : "loot");
+        },
+
+        useBagSlot: function(slot) {
+            var entry = this.player && this.player.bag[slot];
+
+            if(entry && !this.bagActionPending && this.canUseItem(entry.kind)) {
+                this.useItemSound(entry.kind);
+                this.sendBagAction(Types.Inventory.USE, slot);
+            }
+        },
+
+        dropBagSlot: function(slot) {
+            if(this.player && this.player.bag[slot] && Types.isBoundItem(this.player.bag[slot].kind)) {
+                this.showNotification("This comes from your TheoSwap NFT and can't be dropped");
+                return;
+            }
+            if(this.player && this.player.bag[slot]) {
+                this.sendBagAction(Types.Inventory.DROP, slot);
+            }
+        },
+
+        unequipSlot: function(slotName) {
+            if(slotName === "weapon" || slotName === "armor") {
+                this.showNotification("Equip another one from your bag to swap it");
+                return;
+            }
+            if(this.player && this.player.equipped && this.player.equipped[slotName]) {
+                if(!this.player.hasRoomFor(this.player.equipped[slotName])) {
+                    this.showNotification("Your bag is full");
+                    return;
+                }
+                this.sendBagAction(Types.Inventory.UNEQUIP, _.indexOf(Types.Inventory.EQUIP_SLOTS, slotName));
+            }
+        },
+
+        // Points a quick bar slot at an item kind; 0 clears it.
+        setQuickSlot: function(index, kind) {
+            if(this.player) {
+                this.client.sendInventoryAction(Types.Inventory.SET_QUICK, index, kind);
+            }
+        },
+
+        useQuickSlot: function(index) {
+            var entry = this.player && this.player.quick && this.player.quick[index];
+
+            if(!entry || this.bagActionPending) {
+                return;
+            }
+            if(entry.type === Types.Inventory.QUICK_ITEM) {
+                if(this.player.countItem(entry.id) === 0) {
+                    this.showNotification("You have none left");
+                    return;
+                }
+                if(this.canUseItem(entry.id)) {
+                    this.useItemSound(entry.id);
+                    this.sendBagAction(Types.Inventory.USE_QUICK, index);
+                }
+            }
+        },
+
         onPlayerEquipmentChange: function(callback) {
             this.equipment_callback = callback;
         },
@@ -2782,10 +2924,13 @@ function(InfoManager, BubbleManager, Renderer, Map, Animation, Sprite, AnimatedT
 
 	    tryLootingItem: function(item) {
             try {
+                var equips = this.player.isUpgrade(item.kind);
+
                 this.player.loot(item);
                 this.client.sendLoot(item); // Notify the server that this item has been looted
                 this.removeItem(item);
-                this.showNotification(item.getLootMessage());
+                this.showNotification(equips ? item.getLootMessage().replace("You pick up", "You equip")
+                                             : item.getLootMessage());
 
                 if(item.type === "armor") {
                     this.tryUnlockingAchievement("FAT_LOOT");
@@ -2804,7 +2949,7 @@ function(InfoManager, BubbleManager, Renderer, Map, Animation, Sprite, AnimatedT
                     this.audioManager.playSound("firefox");
                 }
 
-                if(Types.isHealingItem(item.kind)) {
+                if(Types.isHealingItem(item.kind) && !Types.isBaggable(item.kind)) {
                     this.audioManager.playSound("heal");
                 } else {
                     this.audioManager.playSound("loot");

@@ -38,6 +38,8 @@ define(['player', 'entityfactory', 'lib/bison'], function(Player, EntityFactory,
             this.handlers[Types.Messages.GUILDERROR] = this.receiveGuildError;
             this.handlers[Types.Messages.GUILD] = this.receiveGuild;
             this.handlers[Types.Messages.PVP] = this.receivePVP;
+            this.handlers[Types.Messages.INVENTORY] = this.receiveInventory;
+            this.handlers[Types.Messages.THEOSWAP] = this.receiveTheoSwap;
             this.useBison = false;
             this.enable();
         },
@@ -305,6 +307,38 @@ define(['player', 'entityfactory', 'lib/bison'], function(Player, EntityFactory,
             }
         },
 
+        // Layout matches Messages.Inventory on the server.
+        receiveInventory: function(data) {
+            var inv = Types.Inventory,
+                equipped = {},
+                quick = [],
+                slots = [],
+                i = 1;
+
+            _.each(inv.EQUIP_SLOTS, function(slot) {
+                equipped[slot] = data[i++] || null;
+            });
+            for(var q = 0; q < inv.QUICK_SIZE; q++, i += 2) {
+                quick.push(data[i] ? {type: data[i], id: data[i + 1]} : null);
+            }
+            for(; i < data.length; i += 2) {
+                slots.push(data[i] ? {kind: data[i], count: data[i + 1]} : null);
+            }
+
+            if(this.inventory_callback) {
+                this.inventory_callback(equipped, quick, slots);
+            }
+        },
+
+        // Layout matches Messages.TheoSwap on the server.
+        receiveTheoSwap: function(data) {
+            if(this.theoswap_callback) {
+                this.theoswap_callback(data[1] === 1,
+                                       {speed: data[2], attack: data[3], defence: data[4], health: data[5]},
+                                       data[6], data[7], data[8]);
+            }
+        },
+
         receiveDrop: function(data) {
             var mobId = data[1],
                 id = data[2],
@@ -455,6 +489,14 @@ define(['player', 'entityfactory', 'lib/bison'], function(Player, EntityFactory,
 
         onDisconnected: function(callback) {
             this.disconnected_callback = callback;
+        },
+
+        onInventory: function(callback) {
+            this.inventory_callback = callback;
+        },
+
+        onTheoSwap: function(callback) {
+            this.theoswap_callback = callback;
         },
 
         onWelcome: function(callback) {
@@ -648,6 +690,18 @@ define(['player', 'entityfactory', 'lib/bison'], function(Player, EntityFactory,
         sendChat: function(text) {
             this.sendMessage([Types.Messages.CHAT,
                               text]);
+        },
+
+        sendInventoryAction: function(action, a, b) {
+            this.sendMessage([Types.Messages.INVENTORY,
+                              action,
+                              a,
+                              b || 0]);
+        },
+
+        sendTheoSwapLink: function(userCode) {
+            this.sendMessage([Types.Messages.THEOSWAP,
+                              userCode]);
         },
 
         sendLoot: function(item) {

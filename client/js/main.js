@@ -81,6 +81,59 @@ define(['jquery', 'app', 'entrypoint'], function($, App, EntryPoint) {
                 event.stopPropagation();
             });
 
+            $('#weapon, #armor, #inventory-close').click(function() {
+                app.toggleInventory();
+            });
+
+            $('#inventory-slots').delegate('.inventory-slot.filled', 'click', function(event) {
+                var slot = parseInt($(this).attr('data-slot'));
+
+                if(event.originalEvent && event.originalEvent.detail > 1) {
+                    return; // Second click of a double-click would swap straight back
+                }
+                if(event.shiftKey) {
+                    game.dropBagSlot(slot);
+                } else {
+                    game.useBagSlot(slot);
+                }
+            });
+
+            $('#inventory-equipment').delegate('.inventory-slot.filled', 'click', function() {
+                game.unequipSlot($(this).attr('data-equip'));
+            });
+
+            // Drag a bag item onto the quick bar to assign it.
+            $('#inventory-slots').delegate('.inventory-slot.filled', 'dragstart', function(event) {
+                var entry = game.player.bag[parseInt($(this).attr('data-slot'))];
+                if(entry) {
+                    event.originalEvent.dataTransfer.setData('text/plain', String(entry.kind));
+                    event.originalEvent.dataTransfer.effectAllowed = 'link';
+                }
+            });
+            $('#quickbar').delegate('.quick', 'dragover', function(event) {
+                event.preventDefault();
+                $(this).addClass('drop-target');
+            });
+            $('#quickbar').delegate('.quick', 'dragleave', function() {
+                $(this).removeClass('drop-target');
+            });
+            $('#quickbar').delegate('.quick', 'drop', function(event) {
+                var kind = parseInt(event.originalEvent.dataTransfer.getData('text/plain'));
+
+                event.preventDefault();
+                $(this).removeClass('drop-target');
+                if(kind) {
+                    game.setQuickSlot(parseInt($(this).attr('data-quick')), kind);
+                }
+            });
+            $('#quickbar').delegate('.quick', 'click', function() {
+                game.useQuickSlot(parseInt($(this).attr('data-quick')));
+            });
+            $('#quickbar').delegate('.quick.filled', 'contextmenu', function(event) {
+                event.preventDefault();
+                game.setQuickSlot(parseInt($(this).attr('data-quick')), 0);
+            });
+
             $('#toggle-credits').click(function() {
                 app.toggleScrollContent('credits');
             });
@@ -233,6 +286,10 @@ define(['jquery', 'app', 'entrypoint'], function($, App, EntryPoint) {
 
             game.onPlayerEquipmentChange(function() {
                 app.initEquipmentIcons();
+            });
+
+            game.onPlayerInventoryChange(function() {
+                app.renderInventory();
             });
 
             game.onPlayerInvincible(function() {
@@ -446,6 +503,15 @@ define(['jquery', 'app', 'entrypoint'], function($, App, EntryPoint) {
                         case Types.Keys.I:
                             $('#achievementsbutton').click();
                             break;
+                        case Types.Keys.B:
+                            app.toggleInventory();
+                            break;
+                        case Types.Keys.ONE:
+                        case Types.Keys.TWO:
+                        case Types.Keys.THREE:
+                        case Types.Keys.FOUR:
+                            game.useQuickSlot(key - Types.Keys.ONE);
+                            break;
                         case Types.Keys.H:
                             $('#helpbutton').click();
                             break;
@@ -549,6 +615,7 @@ define(['jquery', 'app', 'entrypoint'], function($, App, EntryPoint) {
                 if($('#chatinput:focus').size() == 0 && $('#nameinput:focus').size() == 0) {
                     if(key === 27) { // ESC
                         app.hideWindows();
+                        app.hideInventory();
                         _.each(game.player.attackers, function(attacker) {
                             attacker.stop();
                         });

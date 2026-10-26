@@ -2,6 +2,7 @@ var Utils = require('../utils');
 
 var cls = require("../lib/class"),
     Player = require('../player'),
+    Bag = require('../bag'),
     Messages = require("../message"),
     redis = require("redis"),
     bcrypt = require("bcrypt");
@@ -69,6 +70,9 @@ module.exports = DatabaseHandler = cls.Class.extend({
                         .hGet(userKey, "achievement8:found") // 33
                         .hGet(userKey, "achievement8:progress") // 34
                         .hGet("cb:" + player.connection._connection.remoteAddress, "etime") // 35
+                        .hGet(userKey, "inv") // 36
+                        .hGet(userKey, "equip") // 37
+                        .hGet(userKey, "quick") // 38
                         .exec().then(function(replies){
                             var pw = replies[0];
                             var armor = replies[1];
@@ -80,10 +84,21 @@ module.exports = DatabaseHandler = cls.Class.extend({
                             var avatar = replies[7];
                             var pubTopName = replies[8];
                             var nextNewArmor = replies[9];
-                            var inventory = [replies[10], replies[12]];
-                            var inventoryNumber = [
-                              Utils.NaN2Zero(replies[11]),
-                              Utils.NaN2Zero(replies[13])];
+                            var bag = Bag.fromJSON(replies[36]);
+                            if(replies[36] === null) {
+                                // Older saves kept two slots in separate fields
+                                [[replies[10], replies[11]], [replies[12], replies[13]]].forEach(function(old) {
+                                    var kind = Types.getKindFromString(old[0]);
+                                    for(var n = Utils.NaN2Zero(old[1]); kind && n > 0 && bag.canAdd(kind); n--) {
+                                        bag.add(kind);
+                                    }
+                                });
+                                if(replies[10] || replies[12]) {
+                                    self.setBag(player.name, bag);
+                                }
+                            }
+                            var equipment = self.parseEquipment(replies[37]);
+                            var quick = self.parseQuickBar(replies[38]);
                             var achievementFound = [
                               Utils.trueFalse(replies[14]),
                               Utils.trueFalse(replies[16]),
@@ -124,28 +139,14 @@ module.exports = DatabaseHandler = cls.Class.extend({
                                 var lastLoginTimeDate = new Date(lastLoginTime);
                                 if(lastLoginTimeDate.getDate() !== d.getDate()
                                 && pubPoint > 0){
-                                  var targetInventoryNumber = -1;
-                                  if(inventory[0] === "burger"){
-                                    targetInventoryNumber = 0;
-                                  } else if(inventory[1] === "burger"){
-                                    targetInventoryNumber = 1;
-                                  } else if(inventory[0] === null){
-                                    targetInventoryNumber = 0;
-                                  } else if(inventory[1] === null){
-                                    targetInventoryNumber = 1;
-                                  }
-
-                                  if(targetInventoryNumber >= 0){
-                                    if(pubPoint > 100){
-                                      pubPoint = 100;
+                                  var burgers = Math.min(pubPoint, 100) * 10;
+                                  if(bag.canAdd(Types.Entities.BURGER)){
+                                    while(burgers > 0 && bag.canAdd(Types.Entities.BURGER)){
+                                      bag.add(Types.Entities.BURGER);
+                                      burgers--;
                                     }
-                                    inventory[targetInventoryNumber] = "burger";
-                                    inventoryNumber[targetInventoryNumber] += pubPoint*10;
-                                    self.setInventory(player.name,
-                                             Types.getKindFromString("burger"),
-                                             targetInventoryNumber,
-                                             inventoryNumber[targetInventoryNumber]);
-                                    client.zrem("adrank", player.name);
+                                    client.zRem("adrank", player.name);
+                                    self.setBag(player.name, bag);
                                   }
                                 }
 
@@ -183,7 +184,7 @@ module.exports = DatabaseHandler = cls.Class.extend({
                                 player.sendWelcome(armor, weapon,
                                     avatar, weaponAvatar, exp, admin,
                                     bannedTime, banUseTime,
-                                    inventory, inventoryNumber,
+                                    bag, equipment, quick,
                                     achievementFound, achievementProgress,
                                     x, y,
                                     chatBanEndTime);
@@ -226,7 +227,7 @@ module.exports = DatabaseHandler = cls.Class.extend({
                         player.sendWelcome(
                             "clotharmor", "sword1", "clotharmor", "sword1", 0,
                              null, 0, 0,
-                             [null, null], [0, 0],
+                             new Bag(), {}, [],
                              [false, false, false, false, false, false],
                              [0, 0, 0, 0, 0, 0],
                              player.x, player.y, 0);
@@ -330,22 +331,78 @@ module.exports = DatabaseHandler = cls.Class.extend({
         log.info("Set Exp: " + name + " " + exp);
         client.hSet("u:" + name, "exp", exp);
     },
-    setInventory: function(name, itemKind, inventoryNumber, itemNumber){
-        if(itemKind){
-            client.hSet("u:" + name, "inventory" + inventoryNumber, Types.getKindAsString(itemKind));
-            client.hSet("u:" + name, "inventory" + inventoryNumber + ":number", itemNumber);
-           log.info("SetInventory: " + name + ", "
-                                     + Types.getKindAsString(itemKind) + ", "
-                                     + inventoryNumber + ", "
-                                     + itemNumber);
-        } else{
-            this.makeEmptyInventory(name, inventoryNumber);
-        }
+    setBag: function(name, bag){
+        log.info("Set Bag: " + name + " " + bag.toJSON());
+        client.multi()
+            .hSet("u:" + name, "inv", bag.toJSON())
+            .hDel("u:" + name, ["inventory0", "inventory0:number", "inventory1", "inventory1:number"])
+            .exec();
     },
-    makeEmptyInventory: function(name, number){
-        log.info("Empty Inventory: " + name + " " + number);
-        client.hDel("u:" + name, "inventory" + number);
-        client.hDel("u:" + name, "inventory" + number + ":number");
+    // Saved as {"helmet": "kindname", ...}; anything that no longer fits its slot is dropped.
+    parseEquipment: function(json){
+        var equipment = {};
+        try {
+            var saved = JSON.parse(json) || {};
+            Object.keys(saved).forEach(function(slot){
+                var kind = Types.getKindFromString(saved[slot]);
+                if(kind && slot !== "weapon" && slot !== "armor" && Types.getEquipSlot(kind) === slot){
+                    equipment[slot] = kind;
+                }
+            });
+        } catch(e) {
+            log.error("Could not read saved equipment: " + json);
+        }
+        return equipment;
+    },
+    setEquipment: function(name, equipment){
+        var saved = {};
+        Object.keys(equipment).forEach(function(slot){
+            saved[slot] = Types.getKindAsString(equipment[slot]);
+        });
+        log.info("Set Equipment: " + name + " " + JSON.stringify(saved));
+        client.hSet("u:" + name, "equip", JSON.stringify(saved));
+    },
+    // Saved as [["item", "flask"], null, ...]
+    parseQuickBar: function(json){
+        var quick = [];
+        try {
+            (JSON.parse(json) || []).slice(0, Types.Inventory.QUICK_SIZE).forEach(function(entry, i){
+                var kind = entry && entry[0] === "item" && Types.getKindFromString(entry[1]);
+                quick[i] = kind && Types.isBaggable(kind) ? {type: Types.Inventory.QUICK_ITEM, id: kind} : null;
+            });
+        } catch(e) {
+            log.error("Could not read saved quick bar: " + json);
+        }
+        return quick;
+    },
+    setQuickBar: function(name, quick){
+        var saved = [];
+        for(var i = 0; i < Types.Inventory.QUICK_SIZE; i++){
+            var entry = quick[i];
+            saved.push(entry && entry.type === Types.Inventory.QUICK_ITEM ? ["item", Types.getKindAsString(entry.id)] : null);
+        }
+        log.info("Set Quick Bar: " + name + " " + JSON.stringify(saved));
+        client.hSet("u:" + name, "quick", JSON.stringify(saved));
+    },
+    // Calls back with the player's TheoSwap user code (or null) and the potion packs
+    // ("contract:tokenId") whose flasks were already given out.
+    getTheoSwap: function(name, callback){
+        client.multi()
+            .hGet("u:" + name, "tsw")
+            .sMembers("tsw:claimed:" + name)
+            .exec().then(function(replies){
+                callback(replies[0] || null, replies[1] || []);
+            }).catch(function(err){
+                log.error("Could not read TheoSwap data for " + name + ": " + err);
+                callback(null, null);
+            });
+    },
+    setTheoSwapCode: function(name, code){
+        log.info("Set TheoSwap code: " + name);
+        client.hSet("u:" + name, "tsw", code);
+    },
+    claimTheoSwapPotions: function(name, key){
+        client.sAdd("tsw:claimed:" + name, key);
     },
     foundAchievement: function(name, number){
         log.info("Found Achievement: " + name + " " + number);

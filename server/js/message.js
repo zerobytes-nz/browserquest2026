@@ -101,6 +101,44 @@ Messages.EquipItem = Message.extend({
     }
 });
 
+// Sent only to the owning player: one kind per EQUIP_SLOTS entry (0 when empty),
+// then a type, id pair per quick bar slot, then a kind, count pair per bag slot.
+Messages.Inventory = Message.extend({
+    init: function (player) {
+        this.player = player;
+    },
+    serialize: function () {
+        var player = this.player,
+            msg = [Types.Messages.INVENTORY];
+
+        Types.Inventory.EQUIP_SLOTS.forEach(function(slot) {
+            msg.push(player.getEquipped(slot) || 0);
+        });
+        player.quick.forEach(function(entry) {
+            msg.push(entry ? entry.type : 0, entry ? entry.id : 0);
+        });
+        return msg.concat(player.bag.serialize());
+    }
+});
+
+// Sent only to the owning player after a TheoSwap sync or a change of NFT gear:
+// status (1 linked, 0 failed), the speed, attack, defence and health bonuses of the gear being worn,
+// flasks added from potion packs, then max and current hit points.
+Messages.TheoSwap = Message.extend({
+    init: function (player, status, potionsAdded) {
+        this.player = player;
+        this.status = status;
+        this.potionsAdded = potionsAdded || 0;
+    },
+    serialize: function () {
+        var player = this.player;
+
+        return [Types.Messages.THEOSWAP, this.status,
+                player.nftBonus("speed"), player.nftBonus("attack"), player.nftBonus("defence"), player.nftBonus("health"),
+                this.potionsAdded, player.maxHitPoints, player.hitPoints];
+    }
+});
+
 Messages.Drop = Message.extend({
     init: function (mob, item) {
         this.mob = mob;

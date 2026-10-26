@@ -44,6 +44,7 @@ function main(config) {
     log.info("Starting BrowserQuest game server...");
     var selector = DatabaseSelector(config);
     databaseHandler = new selector(config);
+    require("./theoswap").configure(config.theoswap);
 
     server.onConnect(function(connection) {
         var world; // the one in which the player will be spawned

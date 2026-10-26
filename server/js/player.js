@@ -3,10 +3,12 @@ var cls = require("./lib/class"),
     _ = require("underscore"),
     Character = require('./character'),
     Chest = require('./chest'),
+    Bag = require('./bag'),
     Messages = require("./message"),
     Utils = require("./utils"),
     Properties = require("./properties"),
     Formulas = require("./formulas"),
+    TheoSwap = require("./theoswap"),
     check = require("./format").check,
     Types = require("../../shared/js/gametypes")
     bcrypt = require('bcrypt');
@@ -34,9 +36,16 @@ module.exports = Player = Character.extend({
         this.level = 0;
         this.lastWorldChatMinutes=99;
 
-        this.inventory = [];
-        this.inventoryCount = [];
+        this.bag = new Bag();
+        this.equipment = {};   // Slots other than weapon and armor: slot name -> kind
+        this.quick = [];       // Quick bar: null or {type, id}, filled in sendWelcome
         this.achievement = [];
+
+        this.theoswapCode = null;     // TheoSwap user code, saved per character
+        this.theoswapClaimed = null;  // Potion packs already given out; null until loaded
+        this.theoswapPending = null;  // Code sent by the client before the saved data loaded
+        this.lastTheoSwapSync = 0;
+        this.nftGear = {};            // Gear kind -> {speed, attack, health} from the player's NFTs
 
         this.chatBanEndTime = 0;
 
@@ -187,6 +196,7 @@ module.exports = Player = Character.extend({
                     var dmg = Formulas.dmg(self.weaponLevel, mob.armorLevel);
 
                     if(dmg > 0) {
+                      dmg += self.nftBonus("attack");
                       if(mob.type !== "player"){
                         mob.receiveDamage(dmg, self.id);
                         self.server.handleMobHate(mob.id, self.id, dmg);
@@ -207,7 +217,8 @@ module.exports = Player = Character.extend({
                 log.info("HURT: " + self.name + " " + message[1]);
                 var mob = self.server.getEntityById(message[1]);
                 if(mob && self.hitPoints > 0) {
-                    self.hitPoints -= Formulas.dmg(mob.weaponLevel, self.armorLevel);
+                    // NFT armour blocks a flat amount of every hit
+                    self.hitPoints -= Math.max(0, Formulas.dmg(mob.weaponLevel, self.armorLevel) - self.nftBonus("defence"));
                     self.server.handleHurtEntity(self);
 
                     if(self.hitPoints <= 0) {
@@ -226,6 +237,9 @@ module.exports = Player = Character.extend({
                     var kind = item.kind;
 
                     if(Types.isItem(kind)) {
+                        if(Types.isBaggable(kind) && !self.isUpgrade(kind) && !self.bag.canAdd(kind)) {
+                            return; // Bag is full: leave the item on the ground
+                        }
                         self.broadcast(item.despawn());
                         self.server.removeEntity(item);
 
@@ -237,25 +251,21 @@ module.exports = Player = Character.extend({
                                 self.firepotionTimeout = null;
                             }, 15000);
                             self.send(new Messages.HitPoints(self.maxHitPoints).serialize());
-                        } else if(Types.isHealingItem(kind)) {
-                            var amount;
-
-                            switch(kind) {
-                                case Types.Entities.FLASK:
-                                    amount = 40;
-                                    break;
-                                case Types.Entities.BURGER:
-                                    amount = 100;
-                                    break;
+                        } else if(self.isUpgrade(kind)) {
+                            var previous = self.wear(kind);
+                            if(previous && self.bag.add(previous) < 0) {
+                                self.dropOnGround(previous); // No room for the old gear
                             }
-
-                            if(!self.hasFullHealth()) {
-                                self.regenHealthBy(amount);
-                                self.server.pushToPlayer(self, self.health());
+                            self.saveBag();
+                            self.sendInventory();
+                            self.showGear(kind);
+                            if(Types.isBoundItem(previous)) {
+                                self.updateNftBonuses(); // An NFT weapon or armour went back in the bag
                             }
-                        } else if(Types.isArmor(kind) || Types.isWeapon(kind)) {
-                            self.equipItem(item.kind);
-                            self.broadcast(self.equip(kind));
+                        } else if(Types.isBaggable(kind)) {
+                            self.bag.add(kind);
+                            self.saveBag();
+                            self.sendInventory();
                         }
                     }
                 }
@@ -290,78 +300,21 @@ module.exports = Player = Character.extend({
                     databaseHandler.setCheckpoint(self.name, self.x, self.y);
                 }
             }
-            else if(action === Types.Messages.INVENTORY){
+            else if(action === Types.Messages.INVENTORY) {
                 log.info("INVENTORY: " + self.name + " " + message[1] + " " + message[2] + " " + message[3]);
-                var inventoryNumber = message[2],
-                    count = message[3];
+                var inv = Types.Inventory;
 
-                if(inventoryNumber !== 0 && inventoryNumber !== 1){
-                    return;
+                switch(message[1]) {
+                    case inv.USE: self.useBagSlot(message[2]); break;
+                    case inv.DROP: self.dropBagSlot(message[2]); break;
+                    case inv.UNEQUIP: self.unequipSlot(inv.EQUIP_SLOTS[message[2]]); break;
+                    case inv.SET_QUICK: self.setQuickSlot(message[2], message[3]); break;
+                    case inv.USE_QUICK: self.useQuickSlot(message[2]); break;
                 }
-
-                var itemKind = self.inventory[inventoryNumber];
-                if(itemKind){
-                    if(message[1] === "avatar" || message[1] === "armor"){
-                        if(message[1] === "avatar"){
-                            self.inventory[inventoryNumber] = null;
-                            databaseHandler.makeEmptyInventory(self.name, inventoryNumber);
-                            self.equipItem(itemKind, true);
-                        } else{
-                            self.inventory[inventoryNumber] = self.armor;
-                            databaseHandler.setInventory(self.name, self.armor, inventoryNumber, 1);
-                            self.equipItem(itemKind, false);
-                        }
-                        self.broadcast(self.equip(itemKind));
-                    } else if(message[1] === "empty"){
-                        //var item = self.server.addItem(self.server.createItem(itemKind, self.x, self.y));
-                        var item = self.server.addItemFromChest(itemKind, self.x, self.y);
-                        if(Types.isHealingItem(item.kind)){
-                            if(count < 0)
-                                count = 0;
-                            else if(count > self.inventoryCount[inventoryNumber])
-                                count = self.inventoryCount[inventoryNumber];
-                            item.count = count;
-                        }
-
-                        if(item.count > 0) {
-                            self.server.handleItemDespawn(item);
-
-                            if(Types.isHealingItem(item.kind)) {
-                                if(item.count === self.inventoryCount[inventoryNumber]) {
-                                    self.inventory[inventoryNumber] = null;
-                                    databaseHandler.makeEmptyInventory(self.name, inventoryNumber);
-                                } else {
-                                    self.inventoryCount[inventoryNumber] -= item.count;
-                                    databaseHandler.setInventory(self.name, self.inventory[inventoryNumber], inventoryNumber, self.inventoryCount[inventoryNumber]);
-                                }
-                            } else {
-                                self.inventory[inventoryNumber] = null;
-                                databaseHandler.makeEmptyInventory(self.name, inventoryNumber);
-                            }
-                        }
-                    } else if(message[1] === "eat"){
-                        var amount;
-
-                        switch(itemKind) {
-                            case Types.Entities.FLASK:
-                                amount = 80;
-                                break;
-                            case Types.Entities.BURGER:
-                                amount = 200;
-                                break;
-                        }
-
-                        if(!self.hasFullHealth()) {
-                            self.regenHealthBy(amount);
-                            self.server.pushToPlayer(self, self.health());
-                        }
-                        self.inventoryCount[inventoryNumber] -= 1;
-                        if(self.inventoryCount[inventoryNumber] <= 0){
-                            self.inventory[inventoryNumber] = null;
-                        }
-                        databaseHandler.setInventory(self.name, self.inventory[inventoryNumber], inventoryNumber, self.inventoryCount[inventoryNumber]);
-                    }
-                }
+            }
+            else if(action === Types.Messages.THEOSWAP) {
+                log.info("THEOSWAP: " + self.name);
+                self.linkTheoSwap(message[1]);
             }
             else if(action === Types.Messages.ACHIEVEMENT) {
                 log.info("ACHIEVEMENT: " + self.name + " " + message[1] + " " + message[2]);
@@ -571,8 +524,285 @@ module.exports = Player = Character.extend({
         }
     },
 
+    getEquipped: function(slot) {
+        if(slot === "weapon") {
+            return this.weapon;
+        }
+        if(slot === "armor") {
+            return this.armor;
+        }
+        return this.equipment[slot] || null;
+    },
+
+    // Equips gear from the bag (whatever was worn takes its slot),
+    // or consumes one healing item.
+    useBagSlot: function(slot) {
+        var entry = this.bag.get(slot);
+
+        if(!entry) {
+            return;
+        }
+        var kind = entry.kind;
+
+        if(Types.getEquipSlot(kind)) {
+            var previous = this.wear(kind);
+            this.bag.put(slot, previous);
+            this.saveBag();
+            this.sendInventory();
+            this.showGear(kind);
+            if(Types.isBoundItem(kind) || Types.isBoundItem(previous)) {
+                this.updateNftBonuses();
+            }
+        } else if(Types.isHealingItem(kind)) {
+            if(this.hasFullHealth()) {
+                return;
+            }
+            this.bag.takeOne(slot);
+            this.regenHealthBy(kind === Types.Entities.BURGER ? 100 : 40);
+            this.server.pushToPlayer(this, this.health());
+            this.saveBag();
+            this.sendInventory();
+        }
+    },
+
+    isUpgrade: function(kind) {
+        return Types.isUpgrade(kind, this.getEquipped(Types.getEquipSlot(kind)));
+    },
+
+    // Puts gear on and returns what was worn in that slot before (or null).
+    wear: function(kind) {
+        var slot = Types.getEquipSlot(kind),
+            previous = this.getEquipped(slot);
+
+        if(slot === "weapon" || slot === "armor") {
+            this.equipItem(kind);
+        } else {
+            this.equipment[slot] = kind;
+            this.saveEquipment();
+        }
+        return previous;
+    },
+
+    // Shows other players a new weapon or armour. Called after sendInventory so the
+    // owner's client animates the swap from its inventory update.
+    showGear: function(kind) {
+        var slot = Types.getEquipSlot(kind);
+
+        if(slot === "armor" && this.firepotionTimeout) {
+            return; // Still invincible: the Firefox look stays until the potion wears off
+        }
+        if(slot === "weapon" || slot === "armor") {
+            this.broadcast(this.equip(kind));
+        }
+    },
+
+    dropOnGround: function(kind) {
+        if(Types.isBoundItem(kind)) {
+            return; // NFT gear stays with its owner; the next TheoSwap sync gives it back
+        }
+        var item = this.server.addItemFromChest(kind, this.x, this.y);
+        this.server.handleItemDespawn(item);
+    },
+
+    // Moves worn gear back into the bag. Weapon and armor can only be swapped,
+    // because the character sprite always needs one of each.
+    unequipSlot: function(slot) {
+        var kind = this.equipment[slot];
+
+        if(kind && this.bag.canAdd(kind)) {
+            this.bag.add(kind);
+            delete this.equipment[slot];
+            this.saveBag();
+            this.saveEquipment();
+            this.sendInventory();
+            if(Types.isBoundItem(kind)) {
+                this.updateNftBonuses();
+            }
+        }
+    },
+
+    setQuickSlot: function(index, kind) {
+        if(index !== parseInt(index) || index < 0 || index >= Types.Inventory.QUICK_SIZE) {
+            return;
+        }
+        this.quick[index] = Types.isBaggable(kind) ? {type: Types.Inventory.QUICK_ITEM, id: kind} : null;
+        databaseHandler.setQuickBar(this.name, this.quick);
+        this.sendInventory();
+    },
+
+    // Uses the first bag slot holding the quick bar slot's item.
+    useQuickSlot: function(index) {
+        var entry = this.quick[index];
+
+        if(entry && entry.type === Types.Inventory.QUICK_ITEM) {
+            for(var i = 0; i < Types.Inventory.SIZE; i++) {
+                var s = this.bag.get(i);
+                if(s && s.kind === entry.id) {
+                    this.useBagSlot(i);
+                    return;
+                }
+            }
+        }
+    },
+
+    // Takes one item out of the bag and puts it on the ground under the player.
+    dropBagSlot: function(slot) {
+        var entry = this.bag.get(slot);
+
+        if(entry && Types.isBoundItem(entry.kind)) {
+            return;
+        }
+        var kind = this.bag.takeOne(slot);
+
+        if(kind) {
+            this.dropOnGround(kind);
+            this.saveBag();
+            this.sendInventory();
+        }
+    },
+
+    saveBag: function() {
+        databaseHandler.setBag(this.name, this.bag);
+    },
+
+    saveEquipment: function() {
+        databaseHandler.setEquipment(this.name, this.equipment);
+    },
+
+    sendInventory: function() {
+        this.send(new Messages.Inventory(this).serialize());
+    },
+
     updateHitPoints: function() {
-        this.resetHitPoints(Formulas.hp(this.armorLevel));
+        this.resetHitPoints(Formulas.hp(this.armorLevel) + this.nftBonus("health"));
+    },
+
+    // Total of one stat ("speed", "attack", "defence" or "health") from the NFT gear being worn.
+    nftBonus: function(stat) {
+        var self = this,
+            bonus = 0;
+
+        Types.Inventory.EQUIP_SLOTS.forEach(function(slot) {
+            var kind = self.getEquipped(slot),
+                stats = Types.isBoundItem(kind) && self.nftGear[kind];
+            if(stats) {
+                bonus += stats[stat];
+            }
+        });
+        return bonus;
+    },
+
+    // When an NFT weapon or armour being worn is gone: the best one in the bag, or the starting one.
+    wearFallbackGear: function(slot) {
+        var best = -1, bestRank = -1;
+
+        for(var i = 0; i < Types.Inventory.SIZE; i++) {
+            var s = this.bag.get(i),
+                rank = s && Types.getEquipSlot(s.kind) === slot && !Types.isBoundItem(s.kind)
+                    ? (slot === "weapon" ? Types.getWeaponRank(s.kind) : Types.getArmorRank(s.kind)) : -1;
+            if(rank > bestRank) {
+                best = i;
+                bestRank = rank;
+            }
+        }
+        var kind = best >= 0 ? this.bag.takeOne(best)
+            : (slot === "weapon" ? Types.Entities.SWORD1 : Types.Entities.CLOTHARMOR);
+        this.wear(kind);
+        this.showGear(kind);
+    },
+
+    // After NFT gear goes on or comes off: new max health without a free heal.
+    updateNftBonuses: function(potionsAdded) {
+        var max = Formulas.hp(this.armorLevel) + this.nftBonus("health"),
+            wasFull = this.hasFullHealth();
+
+        this.maxHitPoints = max;
+        this.hitPoints = wasFull ? max : Math.min(this.hitPoints, max);
+        this.send(new Messages.TheoSwap(this, 1, potionsAdded).serialize());
+    },
+
+    // The client sends the user code from the TheoSwap game link once it is in the game.
+    linkTheoSwap: function(code) {
+        if(!TheoSwap.isEnabled() || !TheoSwap.isValidCode(code)) {
+            return;
+        }
+        if(this.theoswapClaimed === null) {
+            this.theoswapPending = code; // Still loading the saved code and claimed packs
+            return;
+        }
+        if(code !== this.theoswapCode) {
+            this.theoswapCode = code;
+            databaseHandler.setTheoSwapCode(this.name, code);
+        }
+        this.syncTheoSwap();
+    },
+
+    // Fetches the player's NFT items and hands out or takes back the gear that goes with them.
+    syncTheoSwap: function() {
+        var self = this,
+            now = Date.now();
+
+        if(!this.theoswapCode || now - this.lastTheoSwapSync < 10000) {
+            return;
+        }
+        this.lastTheoSwapSync = now;
+        TheoSwap.fetchItems(this.theoswapCode, function(err, results) {
+            if(!self.hasEnteredGame) {
+                return; // Logged out meanwhile
+            }
+            if(err) {
+                log.error("TheoSwap sync failed for " + self.name + ": " + err.message);
+                self.send(new Messages.TheoSwap(self, 0).serialize());
+                return;
+            }
+            self.applyTheoSwap(TheoSwap.loadout(results));
+        });
+    },
+
+    applyTheoSwap: function(loadout) {
+        var self = this,
+            potionsAdded = 0;
+
+        this.nftGear = loadout.gear;
+        _.each(Types.TheoSwap.GEAR, function(kind) {
+            var slot = Types.getEquipSlot(kind),
+                owned = !!loadout.gear[kind];
+
+            if(owned && self.getEquipped(slot) !== kind && !self.bag.contains(kind)) {
+                if(!self.getEquipped(slot)) {
+                    self.equipment[slot] = kind;
+                } else {
+                    // Weapon and armour slots are never empty, so NFT ones always start in the bag
+                    self.bag.add(kind); // Stays out if the bag is full; the next sync tries again
+                }
+            } else if(!owned) {
+                self.bag.removeAll(kind);
+                if(self.getEquipped(slot) === kind) {
+                    if(slot === "weapon" || slot === "armor") {
+                        self.wearFallbackGear(slot);
+                    } else {
+                        delete self.equipment[slot];
+                    }
+                }
+            }
+        });
+
+        // Each potion pack NFT fills the bag with flasks once.
+        loadout.potions.forEach(function(pack) {
+            if(_.contains(self.theoswapClaimed, pack.key)) {
+                return;
+            }
+            for(var n = 0; n < pack.count && self.bag.add(Types.Entities.FLASK) >= 0; n++) {
+                potionsAdded++;
+            }
+            self.theoswapClaimed.push(pack.key);
+            databaseHandler.claimTheoSwapPotions(self.name, pack.key);
+        });
+
+        this.saveBag();
+        this.saveEquipment();
+        this.sendInventory();
+        this.updateNftBonuses(potionsAdded);
     },
 
     updatePosition: function() {
@@ -659,7 +889,7 @@ module.exports = Player = Character.extend({
 
     sendWelcome: function(armor, weapon, avatar, weaponAvatar, exp, admin,
                           bannedTime, banUseTime,
-                          inventory, inventoryNumber, achievementFound, achievementProgress,
+                          bag, equipment, quick, achievementFound, achievementProgress,
                           x, y,
                           chatBanEndTime) {
         var self = this;
@@ -668,10 +898,12 @@ module.exports = Player = Character.extend({
         self.equipArmor(Types.getKindFromString(armor));
         self.equipAvatar(Types.getKindFromString(avatar));
         self.equipWeapon(Types.getKindFromString(weapon));
-        self.inventory[0] = Types.getKindFromString(inventory[0]);
-        self.inventory[1] = Types.getKindFromString(inventory[1]);
-        self.inventoryCount[0] = inventoryNumber[0];
-        self.inventoryCount[1] = inventoryNumber[1];
+        self.bag = bag;
+        self.equipment = equipment;
+        self.quick = [];
+        for(var q = 0; q < Types.Inventory.QUICK_SIZE; q++) {
+            self.quick[q] = quick[q] || null;
+        }
         self.achievement[1] = {found: achievementFound[0], progress: achievementProgress[0]};
         self.achievement[2] = {found: achievementFound[1], progress: achievementProgress[1]};
         self.achievement[3] = {found: achievementFound[2], progress: achievementProgress[2]};
@@ -700,7 +932,6 @@ module.exports = Player = Character.extend({
             Types.Messages.WELCOME, self.id, self.name, self.x, self.y,
             self.hitPoints, armor, weapon, avatar, weaponAvatar,
             self.experience, self.admin,
-            inventory[0], inventoryNumber[0], inventory[1], inventoryNumber[1],
             achievementFound[0], achievementProgress[0], achievementFound[1],
             achievementProgress[1], achievementFound[2], achievementProgress[2],
             achievementFound[3], achievementProgress[3], achievementFound[4],
@@ -709,8 +940,26 @@ module.exports = Player = Character.extend({
             achievementProgress[7]
         ]);
 
+        self.sendInventory();
+
         self.hasEnteredGame = true;
         self.isDead = false;
+
+        if(TheoSwap.isEnabled()) {
+            databaseHandler.getTheoSwap(self.name, function(code, claimed) {
+                if(claimed === null) {
+                    return; // Redis error: no potion handouts this session rather than repeats
+                }
+                self.theoswapCode = code;
+                self.theoswapClaimed = claimed;
+                if(self.theoswapPending) {
+                    self.linkTheoSwap(self.theoswapPending);
+                    self.theoswapPending = null;
+                } else {
+                    self.syncTheoSwap();
+                }
+            });
+        }
 
         // self.server.addPlayer(self, aGuildId);
 
