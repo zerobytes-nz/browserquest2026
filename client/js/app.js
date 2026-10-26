@@ -38,7 +38,15 @@ define(['jquery', 'storage'], function($, Storage) {
             // Login form fields
             this.$loginnameinput = $('#loginnameinput');
             this.$loginpwinput = $('#loginpwinput');
-            this.loginFormFields = [this.$loginnameinput, this.$loginpwinput];
+            this.$theoswapcode = $('#logintheocode');
+            this.loginFormFields = [this.$loginnameinput, this.$loginpwinput, this.$theoswapcode];
+
+            // TheoSwap user code: from the game link on TheoSwap (?userCode=...), or the one used last time.
+            var savedCode = null;
+            try {
+                savedCode = localStorage.getItem('theoswapCode');
+            } catch(e) {}
+            this.$theoswapcode.attr('value', this.getUrlTheoSwapCode() || savedCode || '');
 
             // Create new character form fields
             this.$nameinput = $('#nameinput');
@@ -55,6 +63,10 @@ define(['jquery', 'storage'], function($, Storage) {
 
         center: function() {
             window.scrollTo(0, 1);
+        },
+
+        getUrlTheoSwapCode: function() {
+            return $.trim(new URLSearchParams(window.location.search).get('userCode') || '');
         },
 
         canStartGame: function() {
@@ -81,7 +93,20 @@ define(['jquery', 'storage'], function($, Storage) {
             }
 
             if(!this.validateFormFields(username, userpw, userpw2, email)) return;
-            
+
+            // New characters only get a TheoSwap code from the game link; the login form has a box for it.
+            var theoswapCode = action === 'create' ? this.getUrlTheoSwapCode() : $.trim(this.$theoswapcode.attr('value') || '');
+            if(theoswapCode && !/^[A-Za-z0-9_-]{4,64}$/.test(theoswapCode)) {
+                this.addValidationError(this.$theoswapcode, 'That TheoSwap code is not valid. Copy it from your TheoSwap profile, or leave it blank.');
+                return;
+            }
+            this.game.theoswapCode = theoswapCode;
+            try {
+                if(theoswapCode) {
+                    localStorage.setItem('theoswapCode', theoswapCode);
+                }
+            } catch(e) {} // Private mode: it just isn't remembered
+
             this.setPlayButtonState(false);
 
             if(!this.ready || !this.canStartGame()) {
@@ -165,8 +190,16 @@ define(['jquery', 'storage'], function($, Storage) {
         },
 
         start: function() {
+            var game = this.game;
+
             this.hideIntro();
             $('body').addClass('started');
+            // The ground was drawn while the intro still hid the game. Firefox can lose a canvas drawn
+            // while it is invisible, which left the ground black until the next zone change, so draw it
+            // again once the intro's fade (1s after a 0.5s delay, see #container in main.css) is over.
+            setTimeout(function() {
+                game.renderer.renderStaticCanvases();
+            }, 1600);
             if(self.firstTimePlaying) {
                 this.toggleInstructions();
             }
@@ -256,7 +289,7 @@ define(['jquery', 'storage'], function($, Storage) {
             $('<span/>', {
                 'class': 'validation-error blink',
                 text: errorText
-            }).appendTo('.validation-summary');
+            }).appendTo(this.getActiveForm().find('.validation-summary'));
 
             if(field) {
                 field.addClass('field-error').select();

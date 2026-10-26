@@ -733,6 +733,7 @@ module.exports = Player = Character.extend({
         if(code !== this.theoswapCode) {
             this.theoswapCode = code;
             databaseHandler.setTheoSwapCode(this.name, code);
+            this.lastTheoSwapSync = 0; // A new code syncs now, even right after the login sync of the old one
         }
         this.syncTheoSwap();
     },
@@ -746,9 +747,10 @@ module.exports = Player = Character.extend({
             return;
         }
         this.lastTheoSwapSync = now;
-        TheoSwap.fetchItems(this.theoswapCode, function(err, results) {
-            if(!self.hasEnteredGame) {
-                return; // Logged out meanwhile
+        var code = this.theoswapCode;
+        TheoSwap.fetchItems(code, function(err, results) {
+            if(!self.hasEnteredGame || code !== self.theoswapCode) {
+                return; // Logged out, or the player linked a different code meanwhile
             }
             if(err) {
                 log.error("TheoSwap sync failed for " + self.name + ": " + err.message);

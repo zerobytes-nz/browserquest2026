@@ -1585,10 +1585,10 @@ function(InfoManager, BubbleManager, Renderer, Map, Animation, Sprite, AnimatedT
                     }
                 });
 
-                // Playing from TheoSwap: the game link carries the player's user code.
-                var userCode = new URLSearchParams(window.location.search).get("userCode");
-                if(userCode) {
-                    self.client.sendTheoSwapLink(userCode);
+                // TheoSwap user code from the login form or the game link (set by app.tryStartingGame).
+                // Without one the server keeps using the code saved for this character, if any.
+                if(self.theoswapCode) {
+                    self.client.sendTheoSwapLink(self.theoswapCode);
                 }
 
                 self.client.onPlayerEquipItem(function(playerId, itemKind) {
