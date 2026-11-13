@@ -150,7 +150,7 @@ define(['character'], function(Character) {
         "octocat": [
             "Welcome to BrowserQuest!",
             "Want to see the source code?",
-            'Check out <a target="_blank" href="http://github.com/browserquest/BrowserQuest">the repository on GitHub</a>'
+            'Check out <a target="_blank" href="https://github.com/zerobytes-nz/browserquest2026">the repository on GitHub</a>'
         ],
 
         "coder": [
