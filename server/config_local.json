@@ -13,5 +13,9 @@
     "game_servers": [{"server": "localhost", "name": "localhost"}],
     "server_name" : "localhost",
     "production": "heroku",
-    "database": "redis"
+    "database": "redis",
+    "theoswap": {
+        "api_url": "https://www.theoswap.io/api/public/user-items",
+        "api_key": "[game api_key]"
+    }
 }
